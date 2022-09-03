@@ -1,0 +1,309 @@
+---
+title: "PSTAT 194CS Final Project"
+author: "Allen Wang"
+date: '2022-05-25'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(#echo=FALSE,
+               cache=TRUE, autodep=TRUE, cache.comments=FALSE,
+               message=FALSE, warning=FALSE)
+library(stringr)
+```
+
+
+
+
+
+
+
+```{r}
+# This function takes as input a decryption key and creates a dict for key where each letter in the decryption key
+# maps to a alphabet For example if the decryption key is "DGHJKL...." this function will create a dict like {D:A,G:B,H:C....}
+
+create_cipher_dict <- function(cipher){
+  cipher_dict <- str_split(cipher, "")[[1]]
+  alphabet_list <- LETTERS #list(string.ascii_uppercase)
+  names(cipher_dict) <- alphabet_list
+  return(cipher_dict)
+}
+
+# This function takes a text and applies the cipher/key on the text and returns text.
+apply_cipher_on_text <- function(text, cipher) {
+  cipher_dict <- create_cipher_dict(cipher)
+  text <- str_split(str_replace_all(text, "[\n]" , ""),
+                    ""
+                    )[[1]]
+  newtext <- ""
+  for (elem in text){
+    if (toupper(elem) %in% cipher_dict) {
+      newtext <- paste(newtext, cipher_dict[[toupper(elem)]], sep ="")
+      } else {
+        newtext <- paste(newtext, " ", sep = "")
+    }
+  }
+  return(newtext)
+}
+```
+
+```{r}
+`%!in%` <- Negate(`%in%`)
+
+create_scoring_params_dict = function(longtext_path){
+  scoring_param <- c()
+  alphabet_list <- LETTERS
+  fp <- readLines(longtext_path)
+  for (line in fp){
+    newline = trimws(line)
+    #newline = str_replace_all(line, " ", "") 
+    # delete space in the begining and end
+    newline = str_split(newline, "")[[1]]
+    #print(length(newline))
+    
+    for(i in 1:(length(newline)) - 1) {
+      alpha_i = toupper(newline[i])
+      if(identical(alpha_i, character(0)))
+        next
+      #print(alpha_i)
+      
+      alpha_j = toupper(newline[i+1])
+      if(identical(alpha_i, character(0)))
+        next
+      #print(alpha_j)
+      
+      if(c(alpha_i) %!in% alphabet_list & (alpha_i != " ")){
+        alpha_i = " "
+      }
+      if(c(alpha_j) %!in% alphabet_list & (alpha_j != " ")){
+        alpha_j = " "
+      }
+      
+      key = paste(alpha_i, alpha_j, sep = "")
+      
+      if(key %in% names(scoring_param)) {
+        scoring_param[key] = scoring_param[key] + 1
+      } else {
+        scoring_param[length(scoring_param) + 1] = 1
+        names(scoring_param)[length(scoring_param)] = key
+      }
+    }
+    
+  }
+  return(scoring_param)
+}
+```
+
+```{r}
+#############################
+
+# This function takes as input a text and creates scoring_params dict which contains the 
+# number of time each pair of alphabet appears together
+# Ex. {'AB':234,'TH':2343,'CD':23 ..}
+
+score_params_on_cipher <- function(text) {
+  all <- c()
+  alphabet_list <- LETTERS  #list(string.ascii_uppercase)
+  data <- str_split(trimws(text), "")[[1]]
+  for (i in 1:(length(data)-1)){
+    alpha_i = toupper(data[i])
+    alpha_j = toupper(data[i+1])
+    if (!(alpha_i %in% alphabet_list) & (alpha_i != " ")){
+      alpha_i = " "
+    }
+    if (!(alpha_j %in% alphabet_list) & (alpha_j != " ")){
+      alpha_j = " "
+    }
+    key <- paste(alpha_i, alpha_j, sep="")
+    
+    if(key %in% names(all)) {
+        all[key] = all[key] + 1
+      } else {
+        all[length(all) + 1] = 1
+        names(all)[length(all)] = key
+      }
+  }
+  
+  return(all)
+}
+```
+
+
+
+```{r}
+# This function takes the text to be decrypted and a cipher to score the cipher.
+# This function returns the log(score) metric
+
+get_cipher_score <- function(text, cipher, scoring_params){
+  cipher_dict <- create_cipher_dict(cipher)
+
+  decrypted_text <- apply_cipher_on_text(text,cipher)
+
+  scored_f <- score_params_on_cipher(decrypted_text)
+
+  
+  cipher_score <- 0
+  for (k in names(scored_f)) {
+    v = unname(scored_f[k])
+
+    if (k %in% names(scoring_params)){
+      cipher_score = cipher_score + v*log(unname(scoring_params[k]))
+    }
+  }
+  
+  return(cipher_score)
+}
+```
+
+
+```{r}
+# Generate a proposal cipher by swapping letters at two random location
+generate_cipher <- function(cipher) {
+  pos1 <- sample(1:(str_length(cipher)), size=1)  # random.randint(0, len(list(cipher))-1)
+  pos2 <- sample(1:(str_length(cipher)), size=1)
+  if (pos1 == pos2) {
+    return(generate_cipher(cipher))
+  } else {
+    cipher = str_split(cipher, "")[[1]]
+    pos1_alpha = cipher[pos1]
+    pos2_alpha = cipher[pos2]
+    cipher[pos1] = pos2_alpha
+    cipher[pos2] = pos1_alpha
+    joined <- paste(cipher, collapse = '')
+    return(joined)
+  }
+}
+
+# Toss a random coin with robability of head p. If coin comes head return true else false.
+random_coin <- function(p) {
+  unif <- runif(1)  #if unif>=p:  return False
+  return(unif < p)
+}
+```
+
+
+```{r}
+# Takes as input a text to decrypt and runs a MCMC algorithm for n_iter. Returns the state having maximum score and also
+# the last few states
+
+MCMC_decrypt <- function(n_iter,cipher_text,scoring_params) {
+  current_cipher <- paste(sample(LETTERS, 26, replace = FALSE), collapse = "") 
+  state_keeper = c()
+  best_state <- ""
+  score <- 0
+  for (i in 1:n_iter) {
+    state_keeper[i] = current_cipher
+    score_current_cipher <- get_cipher_score(cipher_text, current_cipher, scoring_params)
+    proposed_cipher <- generate_cipher(current_cipher)
+    score_proposed_cipher <- get_cipher_score(cipher_text, proposed_cipher, scoring_params)
+    # tune the scaling parameter
+    acceptance_probability <- min(0.5,   exp(score_proposed_cipher-score_current_cipher))
+    if (score_current_cipher > score) {
+      best_state <- current_cipher
+    }
+    if (random_coin(acceptance_probability)) {
+      current_cipher <- proposed_cipher
+    }
+    #if (i%%500 == 0) {
+      #show <- paste("iter",i,":",substr(apply_cipher_on_text(cipher_text,current_cipher),1,100))
+      #print(show)
+    #}
+  }
+  
+  return(best_state) # state_kepper, 
+}
+```
+
+
+One iteration of MCMC decryption
+```{r, cache=TRUE}
+scoring_params = create_scoring_params_dict('war_and_peace.txt')
+
+plain_text = "As Oliver gave this first proof of the free and proper action of his lungs, \
+the patchwork coverlet which was carelessly flung over the iron bedstead, rustled; \
+the pale face of a young woman was raised feebly from the pillow; and a faint voice imperfectly \
+articulated the words, Let me see the child, and die. \
+The surgeon had been sitting with his face turned towards the fire: giving the palms of his hands a warm \
+and a rub alternately. As the young woman spoke, he rose, and advancing to the bed's head, said, with more kindness \
+than might have been expected of him: "
+
+encryption_key = "XEBPROHYAUFTIDSJLKZMWVNGQC"
+cipher_text = apply_cipher_on_text(plain_text,encryption_key)
+decryption_key = "ICZNBKXGMPRQTWFDYEOLJVUAHS"
+```
+
+```{r}
+best_state <- MCMC_decrypt(10000,cipher_text,scoring_params) #states,
+```
+```{r}
+cat("Text To Decode:", cipher_text)
+cat("\n")
+cat("\n")
+cat("Decoded Text:",apply_cipher_on_text(cipher_text,best_state))
+cat("\n")
+cat("\n")
+cat("MCMC KEY FOUND:", best_state)
+cat("\n")
+cat("\n")
+cat("ACTUAL DECRYPTION KEY:",decryption_key)
+
+```
+
+```{r}
+# take in the encryption key and return the decryption key
+decyption_key_solver <- function(en_key){
+  a = str_split(en_key,"")[[1]]
+  names(a) = LETTERS
+  b = LETTERS
+  names(b) = LETTERS
+
+  for(i in LETTERS){
+    b[a[i]] = i
+  }
+
+  return(paste(b, collapse = ""))
+
+}
+```
+
+
+Testing Methodology 
+```{r}
+# Experiment 1
+# change number of iteration (100 in the paper, 20-50 is doable)
+n = 20
+# change reference text
+#scoring_params = create_scoring_params_dict('war_and_peace.txt')
+num_success = 0
+
+accuracy = c()
+
+
+for(i in 1:n){
+  #generate a random key
+  en_key = paste(sample(LETTERS, 26, replace = FALSE), collapse = "")
+  actual_de_key = decyption_key_solver(en_key)
+  ci_text = apply_cipher_on_text(plain_text,en_key)
+  # change number of MCMC steps
+  best_state <- MCMC_decrypt(5000, ci_text, scoring_params)
+  decoded_text = apply_cipher_on_text(ci_text,best_state)
+  
+  if(actual_de_key == best_state){
+    num_success = num_success + 1
+  }
+  
+  num_error = sum(str_split(actual_de_key,"")[[1]] != str_split(best_state,"")[[1]])
+  accuracy[i] = (26 - num_error) / 26  
+
+  print(i)
+}
+
+cat("Accuracy =", mean(accuracy))
+cat("\n")
+cat("\n")
+cat("Number of success out of 20:", num_success)
+```
+
+
+
